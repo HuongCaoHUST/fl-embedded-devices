@@ -1,85 +1,83 @@
-"""embeddedexample: A Flower / PyTorch app."""
+"""Ultralytics YOLO11 helpers used by the Flower clients and server."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from pathlib import Path
 
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from datasets import load_from_disk
-from torch.utils.data import DataLoader
-from torchvision.transforms import Compose, Normalize, ToTensor
+from ultralytics import YOLO
 
 
-class Net(nn.Module):
-    """Model (simple CNN adapted from 'PyTorch: A 60 Minute Blitz')"""
-
-    def __init__(self):
-        super(Net, self).__init__()
-        self.conv1 = nn.Conv2d(1, 6, 5)
-        self.pool = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(6, 16, 5)
-        self.fc1 = nn.Linear(16 * 4 * 4, 120)
-        self.fc2 = nn.Linear(120, 84)
-        self.fc3 = nn.Linear(84, 10)
-
-    def forward(self, x):
-        x = self.pool(F.relu(self.conv1(x)))
-        x = self.pool(F.relu(self.conv2(x)))
-        x = x.view(-1, 16 * 4 * 4)
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        return self.fc3(x)
+def build_model(model_name: str) -> YOLO:
+    """Create a YOLO11 model from a model name, YAML file, or checkpoint."""
+    return YOLO(model_name)
 
 
-def load_data_from_disk(path: str, batch_size: int):
-    """Load a dataset in Huggingface format from disk and creates dataloaders."""
-    partition_train_test = load_from_disk(path)
-    pytorch_transforms = Compose([ToTensor(), Normalize((0.5,), (0.5,))])
+def get_trainable_state(model: YOLO) -> dict[str, torch.Tensor]:
+    """Return floating-point tensors only, which are safe to average with FedAvg."""
+    return {
+        name: tensor.detach().cpu().clone()
+        for name, tensor in model.model.state_dict().items()
+        if tensor.is_floating_point()
+    }
 
-    def apply_transforms(batch):
-        """Apply transforms to the partition from FederatedDataset."""
-        batch["image"] = [pytorch_transforms(img) for img in batch["image"]]
-        return batch
 
-    partition_train_test = partition_train_test.with_transform(apply_transforms)
-    trainloader = DataLoader(
-        partition_train_test["train"], batch_size=batch_size, shuffle=True
+def set_trainable_state(model: YOLO, state: Mapping[str, torch.Tensor]) -> None:
+    """Merge federated tensors while preserving integer/non-floating buffers."""
+    local_state = model.model.state_dict()
+    unknown = set(state).difference(local_state)
+    if unknown:
+        raise ValueError(f"Global model contains unknown tensors: {sorted(unknown)[:5]}")
+    for name, tensor in state.items():
+        target = local_state[name]
+        local_state[name] = tensor.to(device=target.device, dtype=target.dtype)
+    model.model.load_state_dict(local_state, strict=True)
+
+
+def resolve_dataset_config(node_config: Mapping, run_config: Mapping) -> str:
+    """Resolve this client's YOLO data YAML (or an Ultralytics built-in YAML)."""
+    configured = node_config.get("dataset-config", run_config["dataset-config"])
+    partition_id = int(node_config.get("partition-id", 0))
+    dataset_config = str(configured).format(partition_id=partition_id)
+    if dataset_config.endswith((".yaml", ".yml")) and Path(dataset_config).exists():
+        return str(Path(dataset_config).expanduser().resolve())
+    return dataset_config
+
+
+def train(
+    model: YOLO,
+    data: str,
+    epochs: int,
+    image_size: int,
+    batch_size: int,
+    device: str,
+    learning_rate: float,
+    project: str,
+):
+    """Train one client locally and return its Ultralytics results object."""
+    return model.train(
+        data=data,
+        epochs=epochs,
+        imgsz=image_size,
+        batch=batch_size,
+        device=device,
+        lr0=learning_rate,
+        project=project,
+        name="train",
+        exist_ok=True,
+        pretrained=False,
+        verbose=False,
     )
-    testloader = DataLoader(partition_train_test["test"], batch_size=batch_size)
-    return trainloader, testloader
 
 
-def train(net, trainloader, epochs, learning_rate, device):
-    """Train the model on the training set."""
-    net.to(device)  # move model to GPU if available
-    criterion = torch.nn.CrossEntropyLoss().to(device)
-    optimizer = torch.optim.SGD(net.parameters(), lr=learning_rate, momentum=0.9)
-    net.train()
-    running_loss = 0.0
-    for _ in range(epochs):
-        for batch in trainloader:
-            images = batch["image"].to(device)
-            labels = batch["label"].to(device)
-            optimizer.zero_grad()
-            loss = criterion(net(images), labels)
-            loss.backward()
-            optimizer.step()
-            running_loss += loss.item()
-    avg_trainloss = running_loss / len(trainloader)
-    return avg_trainloss
-
-
-def test(net, testloader, device):
-    """Validate the model on the test set."""
-    net.to(device)  # move model to GPU if available
-    net.eval()
-    criterion = torch.nn.CrossEntropyLoss()
-    correct, loss = 0, 0.0
-    with torch.no_grad():
-        for batch in testloader:
-            images = batch["image"].to(device)
-            labels = batch["label"].to(device)
-            outputs = net(images)
-            loss += criterion(outputs, labels).item()
-            correct += (torch.max(outputs.data, 1)[1] == labels).sum().item()
-    accuracy = correct / len(testloader.dataset)
-    loss = loss / len(testloader)
-    return loss, accuracy
+def evaluate(model: YOLO, data: str, image_size: int, batch_size: int, device: str):
+    """Evaluate one client and return its Ultralytics validation metrics."""
+    return model.val(
+        data=data,
+        imgsz=image_size,
+        batch=batch_size,
+        device=device,
+        plots=False,
+        verbose=False,
+    )

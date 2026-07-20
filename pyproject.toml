@@ -8,10 +8,10 @@ version = "1.0.0"
 description = "Federated AI with Embedded Devices using Flower"
 license = "Apache-2.0"
 dependencies = [
-    "flwr>=1.28.0",
-    "flwr-datasets[vision]>=0.5.0",
-    "torch==2.10.0",
-    "torchvision==0.25.0",
+    "flwr[simulation]>=1.28.0,<2.0",
+    "torch>=2.2.0",
+    "torchvision>=0.17.0",
+    "ultralytics>=8.3.0,<9.0",
 ]
 
 [tool.hatch.build]
@@ -31,8 +31,17 @@ serverapp = "embeddedexample.server_app:app"
 clientapp = "embeddedexample.client_app:app"
 
 [tool.flwr.app.config]
-num-server-rounds = 3
-fraction-evaluate = 0.5
+num-server-rounds = 2
+fraction-train = 1.0
+fraction-evaluate = 1.0
+min-train-nodes = 2
+min-evaluate-nodes = 2
+min-available-nodes = 2
 local-epochs = 1
-learning-rate = 0.1
-batch-size = 32
+learning-rate = 0.01
+batch-size = 4
+image-size = 320
+model-name = "yolo11n.pt"
+dataset-config = "coco8.yaml"
+device = "auto"
+output-path = "runs/fl/final_yolo11.pt"

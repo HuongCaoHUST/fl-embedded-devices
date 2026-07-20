@@ -1,39 +1,36 @@
-"""embeddedexample: A Flower / PyTorch app."""
+"""Flower ServerApp for federated YOLO11 training."""
 
-import torch
+from pathlib import Path
+
 from flwr.app import ArrayRecord, Context
 from flwr.serverapp import Grid, ServerApp
 from flwr.serverapp.strategy import FedAvg
 
-from embeddedexample.task import Net
+from embeddedexample.task import build_model, get_trainable_state, set_trainable_state
 
-# Create ServerApp
 app = ServerApp()
 
 
 @app.main()
 def main(grid: Grid, context: Context) -> None:
-    """Main entry point for the ServerApp."""
-
-    # Read run config
-    fraction_evaluate: float = context.run_config["fraction-evaluate"]
-    num_rounds: int = context.run_config["num-server-rounds"]
-
-    # Load global model
-    global_model = Net()
-    arrays = ArrayRecord(global_model.state_dict())
-
-    # Initialize FedAvg strategy
-    strategy = FedAvg(fraction_evaluate=fraction_evaluate)
-
-    # Start strategy, running FedAvg for `num_rounds`
+    """Run FedAvg and save a directly usable Ultralytics checkpoint."""
+    model_name = str(context.run_config["model-name"])
+    global_model = build_model(model_name)
+    strategy = FedAvg(
+        fraction_train=float(context.run_config["fraction-train"]),
+        fraction_evaluate=float(context.run_config["fraction-evaluate"]),
+        min_train_nodes=int(context.run_config["min-train-nodes"]),
+        min_evaluate_nodes=int(context.run_config["min-evaluate-nodes"]),
+        min_available_nodes=int(context.run_config["min-available-nodes"]),
+    )
     result = strategy.start(
         grid=grid,
-        initial_arrays=arrays,
-        num_rounds=num_rounds,
+        initial_arrays=ArrayRecord(get_trainable_state(global_model)),
+        num_rounds=int(context.run_config["num-server-rounds"]),
     )
 
-    # Save final model to disk
-    print("\nSaving final model to disk...")
-    state_dict = result.arrays.to_torch_state_dict()
-    torch.save(state_dict, "final_model.pt")
+    set_trainable_state(global_model, result.arrays.to_torch_state_dict())
+    output = Path(str(context.run_config["output-path"]))
+    output.parent.mkdir(parents=True, exist_ok=True)
+    global_model.save(str(output))
+    print(f"\nSaved federated YOLO11 model to {output.resolve()}")

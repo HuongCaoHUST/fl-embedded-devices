@@ -1,87 +1,92 @@
-"""embeddedexample: A Flower / PyTorch app."""
+"""Flower ClientApp for federated YOLO11 object detection."""
+
+from __future__ import annotations
 
 import torch
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 
-from embeddedexample.task import Net, load_data_from_disk
-from embeddedexample.task import test as test_fn
-from embeddedexample.task import train as train_fn
+from embeddedexample.task import (
+    build_model,
+    evaluate as evaluate_model,
+    get_trainable_state,
+    resolve_dataset_config,
+    set_trainable_state,
+    train as train_model,
+)
 
 app = ClientApp()
 
 
+def _device(context: Context) -> str:
+    requested = str(context.run_config.get("device", "auto"))
+    if requested == "auto":
+        return "0" if torch.cuda.is_available() else "cpu"
+    return requested
+
+
+def _load_global_model(msg: Message, context: Context):
+    model = build_model(str(context.run_config["model-name"]))
+    set_trainable_state(model, msg.content["arrays"].to_torch_state_dict())
+    return model
+
+
 @app.train()
-def train(msg: Message, context: Context):
-    """Train the model on local data."""
-
-    # Read from run config
-    local_epochs = context.run_config["local-epochs"]
-    learning_rate = context.run_config["learning-rate"]
-
-    # Load the model and initialize it with the received weights
-    model = Net()
-    model.load_state_dict(msg.content["arrays"].to_torch_state_dict())
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    model.to(device)
-
-    # Load the data
-    # Read the node_config to know where dataset is located
-    dataset_path = context.node_config["dataset-path"]
-    # Read run_config to fetch hyperparameters relevant to this run
-    batch_size = context.run_config["batch-size"]
-    trainloader, _ = load_data_from_disk(dataset_path, batch_size)
-
-    # Call the training function
-    train_loss = train_fn(
-        model,
-        trainloader,
-        local_epochs,
-        learning_rate,
-        device,
+def train(msg: Message, context: Context) -> Message:
+    """Load global weights, train on this client's images, and return new weights."""
+    model = _load_global_model(msg, context)
+    data = resolve_dataset_config(context.node_config, context.run_config)
+    partition_id = int(context.node_config.get("partition-id", 0))
+    train_model(
+        model=model,
+        data=data,
+        epochs=int(context.run_config["local-epochs"]),
+        image_size=int(context.run_config["image-size"]),
+        batch_size=int(context.run_config["batch-size"]),
+        device=_device(context),
+        learning_rate=float(context.run_config["learning-rate"]),
+        project=f"runs/fl/client_{partition_id}",
     )
-
-    # Construct and return reply Message
-    model_record = ArrayRecord(model.state_dict())
-    metrics = {
-        "train_loss": train_loss,
-        "num-examples": len(trainloader.dataset),
-    }
-    metric_record = MetricRecord(metrics)
-    content = RecordDict({"arrays": model_record, "metrics": metric_record})
+    num_examples = len(model.trainer.train_loader.dataset)
+    loss_parts = [
+        float(value)
+        for key, value in model.trainer.metrics.items()
+        if key.startswith("train/") and key.endswith("_loss")
+    ]
+    loss = sum(loss_parts)
+    content = RecordDict(
+        {
+            "arrays": ArrayRecord(get_trainable_state(model)),
+            "metrics": MetricRecord(
+                {"train_loss": loss, "num-examples": num_examples}
+            ),
+        }
+    )
     return Message(content=content, reply_to=msg)
 
 
 @app.evaluate()
-def evaluate(msg: Message, context: Context):
-    """Evaluate the model on local data."""
-
-    # Load the model and initialize it with the received weights
-    model = Net()
-    model.load_state_dict(msg.content["arrays"].to_torch_state_dict())
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    model.to(device)
-
-    # Load the data
-    # Read the node_config to know where dataset is located
-    dataset_path = context.node_config["dataset-path"]
-    # Read run_config to fetch hyperparameters relevant to this run
-    batch_size = context.run_config["batch-size"]
-    _, valloader = load_data_from_disk(dataset_path, batch_size)
-
-    # Call the evaluation function
-    eval_loss, eval_acc = test_fn(
-        model,
-        valloader,
-        device,
+def evaluate(msg: Message, context: Context) -> Message:
+    """Evaluate global weights on this client's validation split."""
+    model = _load_global_model(msg, context)
+    metrics = evaluate_model(
+        model=model,
+        data=resolve_dataset_config(context.node_config, context.run_config),
+        image_size=int(context.run_config["image-size"]),
+        batch_size=int(context.run_config["batch-size"]),
+        device=_device(context),
     )
-
-    # Construct and return reply Message
-    metrics = {
-        "eval_loss": eval_loss,
-        "eval_acc": eval_acc,
-        "num-examples": len(valloader.dataset),
+    # Ultralytics exposes target counts in DetMetrics. Weighting by the number
+    # of annotated objects avoids giving a tiny client the same influence as a
+    # much larger one during distributed evaluation.
+    num_examples = max(int(metrics.box.nt_per_class.sum()), 1)
+    values = {
+        "map50": float(metrics.box.map50),
+        "map50-95": float(metrics.box.map),
+        "precision": float(metrics.box.mp),
+        "recall": float(metrics.box.mr),
+        "num-examples": num_examples,
     }
-    metric_record = MetricRecord(metrics)
-    content = RecordDict({"metrics": metric_record})
-    return Message(content=content, reply_to=msg)
+    return Message(
+        content=RecordDict({"metrics": MetricRecord(values)}), reply_to=msg
+    )
