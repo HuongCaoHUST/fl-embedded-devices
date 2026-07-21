@@ -105,6 +105,10 @@ class JetsonYoloClient(fl.client.NumPyClient):
 
     def fit(self, parameters, config):
         self.set_parameters(parameters)
+        # Ultralytics 8.4 resets `overrides` from the checkpoint after each
+        # train call, and that reduced dictionary may omit the required model
+        # key. Restore it before every federated round.
+        self.model.overrides["model"] = self.args.model
         epochs = int(config.get("local_epochs", self.args.local_epochs))
         print(
             f"Node {self.args.node_id}: training {self.args.data} "
