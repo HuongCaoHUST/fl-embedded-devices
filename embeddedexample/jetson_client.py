@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping
+from pathlib import Path
 
 import flwr as fl
 import numpy as np
 import torch
+import yaml
 
 from embeddedexample.task import build_model, evaluate, train
 
@@ -26,7 +28,14 @@ class JetsonYoloClient(fl.client.NumPyClient):
 
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
-        self.model = build_model(args.model)
+        dataset_config = yaml.safe_load(Path(args.data).read_text(encoding="utf-8"))
+        names = dataset_config["names"]
+        class_names = (
+            {int(index): name for index, name in names.items()}
+            if isinstance(names, dict)
+            else dict(enumerate(names))
+        )
+        self.model = build_model(args.model, class_names=class_names)
         self.parameter_names = list(floating_state(self.model))
 
     def get_parameters(self, config: Mapping):

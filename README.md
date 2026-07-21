@@ -252,9 +252,11 @@ Build và chạy server trên PC/server:
 ```bash
 docker build -f Dockerfile.legacy-server -t fl-yolo-legacy-server .
 docker run --rm -it --name fl-server -p 8080:8080 \
-  -v "$PWD/models:/app/models:ro" -v "$PWD/runs:/app/runs" \
+  -v "$PWD/models:/app/models:ro" \
+  -v "$PWD/datasets/client_0/data.yaml:/app/data.yaml:ro" \
+  -v "$PWD/runs:/app/runs" \
   fl-yolo-legacy-server --clients 3 --rounds 2 \
-  --model /app/models/yolo11n.pt
+  --model /app/models/yolo11n.pt --data-config /app/data.yaml
 ```
 
 Build client trực tiếp trên mỗi Jetson Nano:

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import flwr as fl
 import torch
+import yaml
 from flwr.common import ndarrays_to_parameters, parameters_to_ndarrays
 
 from embeddedexample.task import build_model, get_trainable_state, set_trainable_state
@@ -80,6 +81,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--address", default="0.0.0.0:8080")
     parser.add_argument("--model", default="yolo11n.pt")
+    parser.add_argument(
+        "--data-config",
+        type=Path,
+        required=True,
+        help="YOLO data.yaml used to configure the global model class head",
+    )
     parser.add_argument("--rounds", type=int, default=2)
     parser.add_argument("--clients", type=int, default=3)
     parser.add_argument("--local-epochs", type=int, default=1)
@@ -92,7 +99,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    model = build_model(args.model)
+    dataset_config = yaml.safe_load(args.data_config.read_text(encoding="utf-8"))
+    names = dataset_config["names"]
+    class_names = (
+        {int(index): name for index, name in names.items()}
+        if isinstance(names, dict)
+        else dict(enumerate(names))
+    )
+    model = build_model(args.model, class_names=class_names)
+    print(f"Initialized global model with {len(class_names)} classes: {class_names}")
     initial_arrays = [tensor.numpy() for tensor in get_trainable_state(model).values()]
     strategy = CheckpointingFedAvg(
         model=model,

@@ -7,11 +7,34 @@ from pathlib import Path
 
 import torch
 from ultralytics import YOLO
+from ultralytics.nn.tasks import DetectionModel
+from ultralytics.utils.torch_utils import intersect_dicts
 
 
-def build_model(model_name: str) -> YOLO:
-    """Create a YOLO11 model from a model name, YAML file, or checkpoint."""
-    return YOLO(model_name)
+def build_model(
+    model_name: str, class_names: Mapping[int, str] | None = None
+) -> YOLO:
+    """Create YOLO, optionally replacing its detection head before FL starts."""
+    model = YOLO(model_name)
+    detection_head = model.model.model[-1]
+    current_num_classes = int(detection_head.nc)
+    if class_names is None or len(class_names) == current_num_classes:
+        if class_names is not None:
+            model.model.names = dict(class_names)
+        return model
+
+    pretrained = model.model
+    adapted = DetectionModel(
+        cfg=pretrained.yaml,
+        ch=pretrained.yaml.get("channels", 3),
+        nc=len(class_names),
+        verbose=False,
+    )
+    compatible = intersect_dicts(pretrained.state_dict(), adapted.state_dict())
+    adapted.load_state_dict(compatible, strict=False)
+    adapted.names = dict(class_names)
+    model.model = adapted
+    return model
 
 
 def get_trainable_state(model: YOLO) -> dict[str, torch.Tensor]:
