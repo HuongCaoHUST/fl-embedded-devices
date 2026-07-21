@@ -54,6 +54,7 @@ def train(
     device: str,
     learning_rate: float,
     project: str,
+    workers: int = 8,
 ):
     """Train one client locally and return its Ultralytics results object."""
     return model.train(
@@ -64,19 +65,28 @@ def train(
         device=device,
         lr0=learning_rate,
         project=project,
+        workers=workers,
         name="train",
         exist_ok=True,
         verbose=False,
     )
 
 
-def evaluate(model: YOLO, data: str, image_size: int, batch_size: int, device: str):
+def evaluate(
+    model: YOLO,
+    data: str,
+    image_size: int,
+    batch_size: int,
+    device: str,
+    workers: int = 8,
+):
     """Evaluate one client and return its Ultralytics validation metrics."""
     return model.val(
         data=data,
         imgsz=image_size,
         batch=batch_size,
         device=device,
+        workers=workers,
         plots=False,
         verbose=False,
     )

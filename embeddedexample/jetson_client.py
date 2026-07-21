@@ -62,6 +62,7 @@ class JetsonYoloClient(fl.client.NumPyClient):
             device=self.args.device,
             learning_rate=self.args.learning_rate,
             project=f"/app/runs/client_{self.args.node_id}",
+            workers=self.args.workers,
         )
         num_examples = len(self.model.trainer.train_loader.dataset)
         return self.get_parameters({}), num_examples, {"node_id": self.args.node_id}
@@ -75,6 +76,7 @@ class JetsonYoloClient(fl.client.NumPyClient):
             image_size=self.args.image_size,
             batch_size=self.args.batch_size,
             device=self.args.device,
+            workers=self.args.workers,
         )
         num_examples = max(int(results.nt_per_class.sum()), 1)
         metrics = {
@@ -97,6 +99,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--local-epochs", type=int, default=1)
     parser.add_argument("--image-size", type=int, default=320)
     parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=0,
+        help="DataLoader workers; keep 0 on Jetson Nano to avoid shared-memory errors",
+    )
     parser.add_argument("--learning-rate", type=float, default=0.01)
     parser.add_argument("--device", default="0")
     return parser.parse_args()
@@ -107,9 +115,9 @@ def main() -> None:
     print(f"Torch {torch.__version__}; CUDA available: {torch.cuda.is_available()}")
     if args.device != "cpu" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is not available inside the container")
-    fl.client.start_numpy_client(
+    fl.client.start_client(
         server_address=args.server,
-        client=JetsonYoloClient(args),
+        client=JetsonYoloClient(args).to_client(),
     )
 
 

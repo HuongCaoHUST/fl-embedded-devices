@@ -274,7 +274,7 @@ docker run --rm -it --runtime nvidia --ipc=host --network host \
   --server 192.168.1.10:8080 --node-id jetson-0 \
   --data /app/datasets/client_0/data.yaml \
   --model /app/models/yolo11n.pt \
-  --batch-size 1 --image-size 320 --device 0
+  --batch-size 1 --image-size 320 --workers 0 --device 0
 ```
 
 Server chờ đủ `--clients` trước khi bắt đầu. Mỗi thiết bị cần `--node-id` riêng;
