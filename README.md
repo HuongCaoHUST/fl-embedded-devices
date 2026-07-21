@@ -283,3 +283,12 @@ Server chờ đủ `--clients` trước khi bắt đầu. Mỗi thiết bị c�
 client 1 và 2 mount `client_1`, `client_2` tương ứng. Checkpoint toàn cục được
 lưu ở `runs/fl/final_yolo11.pt`, metric từng Jetson được ghi vào
 `runs/fl/val_metrics_by_node.csv`.
+
+Client Jetson mặc định dùng `--workers 0`. Sau mỗi train/validation, client đưa
+model về CPU, bỏ trainer/validator/dataloader và giải phóng CUDA cache. Với Nano
+4 GB, nên bật 4 GB swap. Có thể thêm giới hạn mềm cho container để chừa RAM cho
+hệ điều hành (chỉ dùng nếu Docker trên thiết bị hỗ trợ memory cgroup):
+
+```bash
+--memory=3g --memory-swap=7g
+```

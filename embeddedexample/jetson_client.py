@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+import gc
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -38,6 +40,45 @@ class JetsonYoloClient(fl.client.NumPyClient):
         self.model = build_model(args.model, class_names=class_names)
         self.parameter_names = list(floating_state(self.model))
 
+    def release_resources(self, phase: str) -> None:
+        """Release Ultralytics runtime objects and CUDA cache between phases."""
+        if torch.cuda.is_available():
+            allocated = torch.cuda.memory_allocated() / (1024**2)
+            reserved = torch.cuda.memory_reserved() / (1024**2)
+            print(
+                f"Node {self.args.node_id}: before {phase} cleanup: "
+                f"CUDA allocated={allocated:.1f} MiB, reserved={reserved:.1f} MiB"
+            )
+
+        # Keep only model weights. Trainers, validators and predictors can retain
+        # dataloaders, batches, plots and CUDA tensors after a phase has ended.
+        self.model.model.to("cpu")
+        self.model.trainer = None
+        self.model.validator = None
+        self.model.predictor = None
+        self.model.metrics = None
+        gc.collect()
+        try:
+            # Return free glibc heap pages to Linux instead of retaining them in
+            # this long-running Flower process between federated rounds.
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except (AttributeError, OSError):
+            pass
+
+        if torch.cuda.is_available():
+            try:
+                torch.cuda.synchronize()
+            except RuntimeError:
+                pass
+            torch.cuda.empty_cache()
+            if hasattr(torch.cuda, "ipc_collect"):
+                torch.cuda.ipc_collect()
+            print(
+                f"Node {self.args.node_id}: after {phase} cleanup: "
+                f"CUDA allocated={torch.cuda.memory_allocated() / (1024**2):.1f} MiB, "
+                f"reserved={torch.cuda.memory_reserved() / (1024**2):.1f} MiB"
+            )
+
     def get_parameters(self, config: Mapping):
         state = floating_state(self.model)
         return [state[name].detach().cpu().numpy().copy() for name in self.parameter_names]
@@ -62,40 +103,50 @@ class JetsonYoloClient(fl.client.NumPyClient):
             f"Node {self.args.node_id}: training {self.args.data} "
             f"for {epochs} epoch(s)"
         )
-        train(
-            model=self.model,
-            data=self.args.data,
-            epochs=epochs,
-            image_size=self.args.image_size,
-            batch_size=self.args.batch_size,
-            device=self.args.device,
-            learning_rate=self.args.learning_rate,
-            project=f"/app/runs/client_{self.args.node_id}",
-            workers=self.args.workers,
-        )
-        num_examples = len(self.model.trainer.train_loader.dataset)
+        try:
+            train(
+                model=self.model,
+                data=self.args.data,
+                epochs=epochs,
+                image_size=self.args.image_size,
+                batch_size=self.args.batch_size,
+                device=self.args.device,
+                learning_rate=self.args.learning_rate,
+                project=f"/app/runs/client_{self.args.node_id}",
+                workers=self.args.workers,
+            )
+            num_examples = len(self.model.trainer.train_loader.dataset)
+        except BaseException:
+            self.release_resources("failed train")
+            raise
+        self.release_resources("train")
         return self.get_parameters({}), num_examples, {"node_id": self.args.node_id}
 
     def evaluate(self, parameters, config):
         self.set_parameters(parameters)
         print(f"Node {self.args.node_id}: validating global model on {self.args.data}")
-        results = evaluate(
-            model=self.model,
-            data=self.args.data,
-            image_size=self.args.image_size,
-            batch_size=self.args.batch_size,
-            device=self.args.device,
-            workers=self.args.workers,
-        )
-        num_examples = max(int(results.nt_per_class.sum()), 1)
-        metrics = {
-            "node_id": self.args.node_id,
-            "map50": float(results.box.map50),
-            "map50-95": float(results.box.map),
-            "precision": float(results.box.mp),
-            "recall": float(results.box.mr),
-            "num-examples": num_examples,
-        }
+        try:
+            results = evaluate(
+                model=self.model,
+                data=self.args.data,
+                image_size=self.args.image_size,
+                batch_size=self.args.batch_size,
+                device=self.args.device,
+                workers=self.args.workers,
+            )
+            num_examples = max(int(results.nt_per_class.sum()), 1)
+            metrics = {
+                "node_id": self.args.node_id,
+                "map50": float(results.box.map50),
+                "map50-95": float(results.box.map),
+                "precision": float(results.box.mp),
+                "recall": float(results.box.mr),
+                "num-examples": num_examples,
+            }
+        except BaseException:
+            self.release_resources("failed validation")
+            raise
+        self.release_resources("validation")
         return 1.0 - metrics["map50-95"], num_examples, metrics
 
 
