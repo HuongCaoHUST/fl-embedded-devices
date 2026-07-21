@@ -6,6 +6,7 @@ import argparse
 import ctypes
 import gc
 from collections.abc import Mapping
+from copy import deepcopy
 from pathlib import Path
 
 import flwr as fl
@@ -89,6 +90,12 @@ class JetsonYoloClient(fl.client.NumPyClient):
                 f"Expected {len(self.parameter_names)} tensors, got {len(parameters)}"
             )
         local_state = self.model.model.state_dict()
+        missing = [name for name in self.parameter_names if name not in local_state]
+        if missing:
+            raise RuntimeError(
+                "The local YOLO architecture changed during a previous phase; "
+                f"missing tensors include: {missing[:5]}"
+            )
         for name, array in zip(self.parameter_names, parameters):
             target = local_state[name]
             local_state[name] = torch.from_numpy(np.asarray(array)).to(
@@ -125,24 +132,34 @@ class JetsonYoloClient(fl.client.NumPyClient):
     def evaluate(self, parameters, config):
         self.set_parameters(parameters)
         print(f"Node {self.args.node_id}: validating global model on {self.args.data}")
+        # Standalone Ultralytics validation fuses Conv+BatchNorm in-place. Run
+        # it on a disposable copy so the federated model keeps the exact same
+        # state_dict keys (including BN tensors) for the next training round.
+        federated_model = self.model.model
+        validation_model = deepcopy(federated_model)
+        self.model.model = validation_model
         try:
-            results = evaluate(
-                model=self.model,
-                data=self.args.data,
-                image_size=self.args.image_size,
-                batch_size=self.args.batch_size,
-                device=self.args.device,
-                workers=self.args.workers,
-            )
-            num_examples = max(int(results.nt_per_class.sum()), 1)
-            metrics = {
-                "node_id": self.args.node_id,
-                "map50": float(results.box.map50),
-                "map50-95": float(results.box.map),
-                "precision": float(results.box.mp),
-                "recall": float(results.box.mr),
-                "num-examples": num_examples,
-            }
+            try:
+                results = evaluate(
+                    model=self.model,
+                    data=self.args.data,
+                    image_size=self.args.image_size,
+                    batch_size=self.args.batch_size,
+                    device=self.args.device,
+                    workers=self.args.workers,
+                )
+                num_examples = max(int(results.nt_per_class.sum()), 1)
+                metrics = {
+                    "node_id": self.args.node_id,
+                    "map50": float(results.box.map50),
+                    "map50-95": float(results.box.map),
+                    "precision": float(results.box.mp),
+                    "recall": float(results.box.mr),
+                    "num-examples": num_examples,
+                }
+            finally:
+                self.model.model = federated_model
+                del validation_model
         except BaseException:
             self.release_resources("failed validation")
             raise
