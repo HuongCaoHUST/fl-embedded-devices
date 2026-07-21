@@ -1,0 +1,78 @@
+name: fl-yolo11
+
+x-app: &app
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: fl-yolo11:local
+  environment:
+    FLWR_HOME: /app/.flwr
+  volumes:
+    # Writable so Ultralytics can download/extract built-in datasets such as
+    # coco8.yaml. Existing custom images and labels are not modified by train.
+    - ./datasets:/app/datasets:rw
+    - ./models:/app/models:ro
+    - ./runs:/app/runs
+    - yolo-cache:/root/.cache
+  networks:
+    - flower
+  restart: unless-stopped
+  init: true
+
+services:
+  server:
+    <<: *app
+    container_name: fl-yolo11-server
+    command:
+      - flower-superlink
+      - --insecure
+      # Dependencies are already baked into fl-yolo11:local. Do not create a
+      # second environment and download PyTorch again for every submitted run.
+      - --disable-runtime-dependency-installation
+    ports:
+      - "9093:9093"
+
+  client-1:
+    <<: *app
+    container_name: fl-yolo11-client-1
+    command:
+      - flower-supernode
+      - --insecure
+      - --superlink=server:9092
+      - --node-config=partition-id=0 num-partitions=2
+    depends_on:
+      - server
+
+  client-2:
+    <<: *app
+    container_name: fl-yolo11-client-2
+    command:
+      - flower-supernode
+      - --insecure
+      - --superlink=server:9092
+      - --node-config=partition-id=1 num-partitions=2
+    depends_on:
+      - server
+
+  submit:
+    <<: *app
+    container_name: fl-yolo11-submit
+    command: ["python", "/app/docker/submit.py"]
+    restart: "no"
+    volumes:
+      - ./datasets:/app/datasets:rw
+      - ./models:/app/models:ro
+      - ./config.yaml:/app/config.yaml:ro
+      - ./runs:/app/runs
+      - yolo-cache:/root/.cache
+    depends_on:
+      - server
+      - client-1
+      - client-2
+
+networks:
+  flower:
+    driver: bridge
+
+volumes:
+  yolo-cache:

@@ -8,11 +8,15 @@ version = "1.0.0"
 description = "Federated AI with Embedded Devices using Flower"
 license = "Apache-2.0"
 dependencies = [
-    "flwr[simulation]>=1.28.0,<2.0",
+    "flwr>=1.28.0,<2.0",
     "torch>=2.2.0",
     "torchvision>=0.17.0",
     "ultralytics>=8.3.0,<9.0",
+    "PyYAML>=6.0,<7.0",
 ]
+
+[project.optional-dependencies]
+simulation = ["flwr[simulation]>=1.28.0,<2.0"]
 
 [tool.hatch.build]
 exclude = [
@@ -41,7 +45,11 @@ local-epochs = 1
 learning-rate = 0.01
 batch-size = 4
 image-size = 320
-model-name = "yolo11n.pt"
-dataset-config = "coco8.yaml"
+# This checkpoint is the initial global model distributed to all clients.
+# It can be an Ultralytics model name or a local .pt path.
+pretrained-model = "yolo11n.pt"
+dataset-config = "datasets/client_{partition_id}/data.yaml"
 device = "auto"
 output-path = "runs/fl/final_yolo11.pt"
+# One row per client and round when validating the aggregated global model.
+val-metrics-path = "runs/fl/val_metrics_by_node.csv"

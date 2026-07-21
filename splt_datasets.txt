@@ -1,0 +1,6 @@
+python split_yolo_dataset.py \
+    --source datasets/root_datasets \
+    --output-dir datasets \
+    --num-clients 3 \
+    --seed 42 \
+    --overwrite

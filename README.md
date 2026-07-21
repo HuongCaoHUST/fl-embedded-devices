@@ -23,7 +23,7 @@ Yêu cầu Python 3.10+ và khoảng 4 GB RAM. Tạo môi trường riêng:
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-pip install -e .
+    pip install -e ".[simulation]"
 ```
 
 Chạy từ thư mục dự án:
@@ -33,7 +33,8 @@ flwr run . --stream \
   --federation-config="num-supernodes=2 client-resources-num-cpus=2 client-resources-num-gpus=0"
 ```
 
-Lần đầu Ultralytics sẽ tải `yolo11n.pt` và COCO8. Cấu hình mặc định cố ý nhỏ:
+Lần đầu Ultralytics sẽ tải `yolo11n.pt` làm global pretrained model ban đầu và
+COCO8. Cấu hình mặc định cố ý nhỏ:
 ảnh 320 px, batch 4, 1 local epoch và 2 vòng FL. COCO8 ở đây chỉ là **smoke
 test**; hai client dùng chung bộ mẫu nên kết quả không đại diện cho một thí
 nghiệm FL thực tế.
@@ -50,6 +51,73 @@ Sau khi chạy xong, kiểm tra checkpoint:
 
 ```bash
 python -c "from ultralytics import YOLO; YOLO('runs/fl/final_yolo11.pt').val(data='coco8.yaml', imgsz=320)"
+```
+
+## Mô phỏng bằng Docker Compose: 1 server và 2 client
+
+Yêu cầu Docker Engine và Docker Compose V2. Dự án cung cấp ba dịch vụ chạy lâu
+dài (`server`, `client-1`, `client-2`) và một dịch vụ ngắn hạn `submit` dùng để
+gửi Flower App lên server.
+
+Điều khiển tự động bằng `config.yaml`:
+
+```yaml
+training:
+  auto_start: true
+  minimum_clients: 2
+  local_epochs: 1
+  server_rounds: 2
+  startup_delay_seconds: 5
+```
+
+Build image rồi khởi động toàn bộ cụm:
+
+```bash
+docker compose build
+docker compose up -d
+docker compose ps
+```
+
+Khi `auto_start: true`, container `submit` tự gửi một job. ServerApp sau đó chờ
+đủ `minimum_clients`; khi đủ hai client, vòng train đầu tiên tự bắt đầu. Theo dõi:
+
+- `local_epochs`: số epoch YOLO mà mỗi client chạy trong một FL round.
+- `server_rounds`: tổng số vòng FL/FedAvg phía server.
+
+```bash
+docker compose logs -f submit server client-1 client-2
+```
+
+Đặt `auto_start: false` nếu chỉ muốn khởi động hạ tầng. Khi đó gửi job thủ công:
+
+```bash
+docker compose run --rm submit \
+  flwr run . docker --stream
+```
+
+Checkpoint cuối được ghi ra máy host tại `runs/fl/final_yolo11.pt`. Xem log của
+hạ tầng bằng:
+
+```bash
+docker compose logs -f server client-1 client-2
+```
+
+Dừng mô phỏng:
+
+```bash
+docker compose down
+```
+
+Muốn xóa cả cache model/dataset đã tải, dùng `docker compose down -v`. Lệnh này
+sẽ khiến lần chạy kế tiếp phải tải lại `yolo11n.pt` và COCO8.
+
+Để dùng dữ liệu riêng, giữ cấu trúc `datasets/client_0` và `datasets/client_1`
+như phần kế tiếp, rồi chạy job với cấu hình ghi đè:
+
+```bash
+docker compose run --rm submit \
+  flwr run . docker --stream \
+  --run-config="dataset-config='datasets/client_{partition_id}/data.yaml'"
 ```
 
 ## Mô phỏng với dữ liệu riêng cho từng client
@@ -90,8 +158,36 @@ flwr run . --stream \
 ```
 
 Nếu thiếu RAM/VRAM, giảm `batch-size` hoặc `image-size`. Để huấn luyện từ đầu,
-đổi `model-name="yolo11n.yaml"`; để dùng biến thể lớn hơn, chọn `yolo11s.pt`,
+đổi `pretrained-model="yolo11n.yaml"`; để dùng biến thể lớn hơn, chọn `yolo11s.pt`,
 `yolo11m.pt`, ... (thiết bị biên thường nên bắt đầu bằng `yolo11n.pt`).
+
+### Global pretrained model ban đầu
+
+`pretrained-model` là nguồn duy nhất dùng để khởi tạo global model tại server.
+Nó có thể là tên checkpoint Ultralytics hoặc đường dẫn tới checkpoint riêng:
+
+```bash
+# Checkpoint chính thức, tự tải trong lần đầu
+docker compose run --rm submit \
+  flwr run . docker --stream \
+  --run-config="pretrained-model='yolo11n.pt'"
+
+# Hoặc checkpoint riêng: chép vào ./models (được mount read-only vào container)
+docker compose run --rm submit \
+  flwr run . docker --stream \
+  --run-config="pretrained-model='/app/models/my_yolo11.pt'"
+```
+
+Luồng trọng số ở mỗi vòng là:
+
+```text
+pretrained checkpoint -> global model server -> client 1/client 2
+                      -> local train -> FedAvg -> global model vòng kế tiếp
+```
+
+Trước mỗi lần local train, client dựng cùng kiến trúc rồi ghi đè bằng toàn bộ
+global floating weights nhận từ server. Ultralytics tiếp tục train trực tiếp từ
+global weights này; chúng không bị khởi tạo lại.
 
 ## Chạy trên thiết bị thật
 
@@ -132,13 +228,15 @@ nằm trong [device_setup.md](device_setup.md).
 Có thể sửa `[tool.flwr.app.config]` trong `pyproject.toml` hoặc ghi đè bằng
 `--run-config`:
 
-- `model-name`: checkpoint/YAML YOLO11.
+- `pretrained-model`: checkpoint/YAML khởi tạo global model ban đầu.
 - `dataset-config`: `data.yaml`, tên dataset tích hợp, hoặc mẫu có
   `{partition_id}`.
 - `num-server-rounds`, `local-epochs`: số vòng server và epoch tại client.
 - `fraction-train`, `fraction-evaluate`: tỷ lệ client tham gia mỗi vòng.
 - `image-size`, `batch-size`, `learning-rate`, `device`.
 - `output-path`: checkpoint toàn cục cuối cùng.
+- `val-metrics-path`: file CSV lưu metric validation của từng node theo từng
+  round (mặc định `runs/fl/val_metrics_by_node.csv`).
 
 `min-*-nodes` mặc định là 2. Khi đổi số client, cần điều chỉnh các giá trị này để
 không lớn hơn số SuperNode sẵn sàng.

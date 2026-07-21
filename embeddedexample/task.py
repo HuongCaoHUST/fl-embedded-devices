@@ -66,7 +66,6 @@ def train(
         project=project,
         name="train",
         exist_ok=True,
-        pretrained=False,
         verbose=False,
     )
 

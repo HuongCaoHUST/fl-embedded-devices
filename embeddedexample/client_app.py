@@ -26,7 +26,9 @@ def _device(context: Context) -> str:
 
 
 def _load_global_model(msg: Message, context: Context):
-    model = build_model(str(context.run_config["model-name"]))
+    # Instantiate the exact same architecture/checkpoint as the server, then
+    # overwrite its floating tensors with the current federated global state.
+    model = build_model(str(context.run_config["pretrained-model"]))
     set_trainable_state(model, msg.content["arrays"].to_torch_state_dict())
     return model
 
@@ -37,6 +39,7 @@ def train(msg: Message, context: Context) -> Message:
     model = _load_global_model(msg, context)
     data = resolve_dataset_config(context.node_config, context.run_config)
     partition_id = int(context.node_config.get("partition-id", 0))
+    print(f"Client partition {partition_id} training with dataset: {data}")
     train_model(
         model=model,
         data=data,
@@ -69,9 +72,12 @@ def train(msg: Message, context: Context) -> Message:
 def evaluate(msg: Message, context: Context) -> Message:
     """Evaluate global weights on this client's validation split."""
     model = _load_global_model(msg, context)
+    data = resolve_dataset_config(context.node_config, context.run_config)
+    partition_id = int(context.node_config.get("partition-id", 0))
+    print(f"Client partition {partition_id} validating with dataset: {data}")
     metrics = evaluate_model(
         model=model,
-        data=resolve_dataset_config(context.node_config, context.run_config),
+        data=data,
         image_size=int(context.run_config["image-size"]),
         batch_size=int(context.run_config["batch-size"]),
         device=_device(context),
@@ -79,7 +85,7 @@ def evaluate(msg: Message, context: Context) -> Message:
     # Ultralytics exposes target counts in DetMetrics. Weighting by the number
     # of annotated objects avoids giving a tiny client the same influence as a
     # much larger one during distributed evaluation.
-    num_examples = max(int(metrics.box.nt_per_class.sum()), 1)
+    num_examples = max(int(metrics.nt_per_class.sum()), 1)
     values = {
         "map50": float(metrics.box.map50),
         "map50-95": float(metrics.box.map),

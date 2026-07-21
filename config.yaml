@@ -1,0 +1,16 @@
+training:
+  # true: `docker compose up` automatically submits one training run.
+  # false: infrastructure starts only; submit manually when desired.
+  auto_start: true
+
+  # Flower waits for this many connected clients before starting round 1.
+  minimum_clients: 2
+
+  # Number of local YOLO epochs performed by each client in every FL round.
+  local_epochs: 1
+
+  # Number of federated aggregation rounds performed by the server.
+  server_rounds: 2
+
+  # Allow the server and clients to open their APIs before app submission.
+  startup_delay_seconds: 5

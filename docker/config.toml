@@ -1,0 +1,3 @@
+[superlink.docker]
+address = "server:9093"
+insecure = true
