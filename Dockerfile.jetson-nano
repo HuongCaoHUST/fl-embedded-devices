@@ -1,0 +1,30 @@
+FROM ultralytics/ultralytics:latest-jetson-jetpack4
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    MPLCONFIGDIR=/tmp/matplotlib \
+    YOLO_CONFIG_DIR=/tmp/ultralytics \
+    FLWR_DISABLE_UPDATE_CHECK=1
+
+WORKDIR /app
+
+# TensorFlow is not used by this PyTorch training client and its bundled
+# libgomp conflicts with JetPack 4's static TLS allocation.
+RUN python3 -m pip uninstall -y \
+      tensorflow tensorflow-cpu tensorflow-cpu-aws tensorflow-gpu \
+      tensorflowjs keras || true
+
+# Flower 1.10 is the last project-compatible branch used here that supports
+# the Python 3.8 interpreter supplied by this JetPack 4 image. Installing this
+# does not replace NVIDIA's Jetson-specific torch/torchvision wheels.
+RUN python3 -m pip install --no-cache-dir \
+      "numpy<2" \
+      "flwr==1.10.0" \
+      "PyYAML>=6.0,<7.0"
+
+COPY embeddedexample /app/embeddedexample
+
+RUN mkdir -p /app/datasets /app/models /app/runs \
+    /tmp/matplotlib /tmp/ultralytics
+
+ENTRYPOINT ["python3", "-m", "embeddedexample.jetson_client"]

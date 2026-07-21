@@ -240,3 +240,44 @@ Có thể sửa `[tool.flwr.app.config]` trong `pyproject.toml` hoặc ghi đè 
 
 `min-*-nodes` mặc định là 2. Khi đổi số client, cần điều chỉnh các giá trị này để
 không lớn hơn số SuperNode sẵn sàng.
+
+## Jetson Nano với JetPack 4
+
+JetPack 4 dùng Python 3.8 và NVIDIA PyTorch 1.11, vì vậy client Jetson dùng
+Flower 1.10 classic transport thay vì ServerApp/SuperNode 1.28. Server legacy và
+client Jetson phải chạy cùng phiên bản Flower 1.10.
+
+Build và chạy server trên PC/server:
+
+```bash
+docker build -f Dockerfile.legacy-server -t fl-yolo-legacy-server .
+docker run --rm -it --name fl-server -p 8080:8080 \
+  -v "$PWD/models:/app/models:ro" -v "$PWD/runs:/app/runs" \
+  fl-yolo-legacy-server --clients 3 --rounds 2 \
+  --model /app/models/yolo11n.pt
+```
+
+Build client trực tiếp trên mỗi Jetson Nano:
+
+```bash
+docker build --network host -f Dockerfile.jetson-nano \
+  -t fl-yolo-jetpack4:local .
+```
+
+Chạy client 0 (đổi IP server và node/dataset trên từng Jetson):
+
+```bash
+docker run --rm -it --runtime nvidia --ipc=host --network host \
+  -v "$PWD/datasets/client_0:/app/datasets/client_0:ro" \
+  -v "$PWD/models:/app/models:ro" -v "$PWD/runs:/app/runs" \
+  fl-yolo-jetpack4:local \
+  --server 192.168.1.10:8080 --node-id jetson-0 \
+  --data /app/datasets/client_0/data.yaml \
+  --model /app/models/yolo11n.pt \
+  --batch-size 1 --image-size 320 --device 0
+```
+
+Server chờ đủ `--clients` trước khi bắt đầu. Mỗi thiết bị cần `--node-id` riêng;
+client 1 và 2 mount `client_1`, `client_2` tương ứng. Checkpoint toàn cục được
+lưu ở `runs/fl/final_yolo11.pt`, metric từng Jetson được ghi vào
+`runs/fl/val_metrics_by_node.csv`.
