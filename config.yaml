@@ -17,7 +17,6 @@ training:
   merge_parts:
     - backbone
     - neck
-    - head
 
   # Allow the server and clients to open their APIs before app submission.
   startup_delay_seconds: 5

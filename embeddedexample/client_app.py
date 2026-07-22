@@ -35,11 +35,26 @@ def _load_global_model(msg: Message, context: Context):
         str(context.run_config["pretrained-model"]),
         class_names=load_class_names(dataset_config),
     )
+    merge_parts = parse_merge_parts(context.run_config["merge-parts"])
+    partition_id = int(context.node_config.get("partition-id", 0))
     if "local-arrays" in context.state:
         set_trainable_state(
             model, context.state["local-arrays"].to_torch_state_dict()
         )
-    set_trainable_state(model, msg.content["arrays"].to_torch_state_dict())
+    global_state = msg.content["arrays"].to_torch_state_dict()
+    expected_names = set(get_trainable_state(model, merge_parts))
+    if set(global_state) != expected_names:
+        raise ValueError(
+            f"Global tensor selection mismatch for client {partition_id}: "
+            f"expected {len(expected_names)}, received {len(global_state)}"
+        )
+    set_trainable_state(model, global_state)
+    full_tensor_count = len(get_trainable_state(model))
+    print(
+        f"Client partition {partition_id} loaded {len(global_state)}/"
+        f"{full_tensor_count} global tensors for {','.join(merge_parts)}; "
+        f"kept {full_tensor_count - len(global_state)} tensors local"
+    )
     return model
 
 

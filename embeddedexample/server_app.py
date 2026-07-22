@@ -76,6 +76,13 @@ def main(grid: Grid, context: Context) -> None:
     global_model = build_model(
         pretrained_model, class_names=load_class_names(dataset_config)
     )
+    initial_federated_state = get_trainable_state(global_model, merge_parts)
+    full_tensor_count = len(get_trainable_state(global_model))
+    print(
+        f"Partial FedAvg selection: {len(initial_federated_state)}/{full_tensor_count} "
+        f"floating tensors will be aggregated; "
+        f"{full_tensor_count - len(initial_federated_state)} stay local"
+    )
     strategy = MetricsLoggingFedAvg(
         metrics_path=str(context.run_config["val-metrics-path"]),
         run_id=context.run_id,
@@ -87,7 +94,7 @@ def main(grid: Grid, context: Context) -> None:
     )
     result = strategy.start(
         grid=grid,
-        initial_arrays=ArrayRecord(get_trainable_state(global_model, merge_parts)),
+        initial_arrays=ArrayRecord(initial_federated_state),
         num_rounds=int(context.run_config["num-server-rounds"]),
     )
 
