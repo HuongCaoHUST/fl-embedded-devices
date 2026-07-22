@@ -8,7 +8,13 @@ from flwr.app import ArrayRecord, Context, Message, MetricRecord
 from flwr.serverapp import Grid, ServerApp
 from flwr.serverapp.strategy import FedAvg
 
-from embeddedexample.task import build_model, get_trainable_state, set_trainable_state
+from embeddedexample.task import (
+    build_model,
+    get_trainable_state,
+    load_class_names,
+    parse_merge_parts,
+    set_trainable_state,
+)
 
 app = ServerApp()
 
@@ -63,8 +69,13 @@ class MetricsLoggingFedAvg(FedAvg):
 def main(grid: Grid, context: Context) -> None:
     """Run FedAvg and save a directly usable Ultralytics checkpoint."""
     pretrained_model = str(context.run_config["pretrained-model"])
+    merge_parts = parse_merge_parts(context.run_config["merge-parts"])
     print(f"Loading initial global model from: {pretrained_model}")
-    global_model = build_model(pretrained_model)
+    print(f"Federated model parts: {', '.join(merge_parts)}")
+    dataset_config = str(context.run_config["dataset-config"]).format(partition_id=0)
+    global_model = build_model(
+        pretrained_model, class_names=load_class_names(dataset_config)
+    )
     strategy = MetricsLoggingFedAvg(
         metrics_path=str(context.run_config["val-metrics-path"]),
         run_id=context.run_id,
@@ -76,7 +87,7 @@ def main(grid: Grid, context: Context) -> None:
     )
     result = strategy.start(
         grid=grid,
-        initial_arrays=ArrayRecord(get_trainable_state(global_model)),
+        initial_arrays=ArrayRecord(get_trainable_state(global_model, merge_parts)),
         num_rounds=int(context.run_config["num-server-rounds"]),
     )
 

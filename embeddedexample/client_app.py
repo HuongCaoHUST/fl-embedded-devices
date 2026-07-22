@@ -10,6 +10,8 @@ from embeddedexample.task import (
     build_model,
     evaluate as evaluate_model,
     get_trainable_state,
+    load_class_names,
+    parse_merge_parts,
     resolve_dataset_config,
     set_trainable_state,
     train as train_model,
@@ -28,7 +30,15 @@ def _device(context: Context) -> str:
 def _load_global_model(msg: Message, context: Context):
     # Instantiate the exact same architecture/checkpoint as the server, then
     # overwrite its floating tensors with the current federated global state.
-    model = build_model(str(context.run_config["pretrained-model"]))
+    dataset_config = resolve_dataset_config(context.node_config, context.run_config)
+    model = build_model(
+        str(context.run_config["pretrained-model"]),
+        class_names=load_class_names(dataset_config),
+    )
+    if "local-arrays" in context.state:
+        set_trainable_state(
+            model, context.state["local-arrays"].to_torch_state_dict()
+        )
     set_trainable_state(model, msg.content["arrays"].to_torch_state_dict())
     return model
 
@@ -57,9 +67,13 @@ def train(msg: Message, context: Context) -> Message:
         if key.startswith("train/") and key.endswith("_loss")
     ]
     loss = sum(loss_parts)
+    # Preserve every local tensor across rounds. Only selected tensors are sent
+    # to the server and overwritten by the next global model.
+    context.state["local-arrays"] = ArrayRecord(get_trainable_state(model))
+    merge_parts = parse_merge_parts(context.run_config["merge-parts"])
     content = RecordDict(
         {
-            "arrays": ArrayRecord(get_trainable_state(model)),
+            "arrays": ArrayRecord(get_trainable_state(model, merge_parts)),
             "metrics": MetricRecord(
                 {"train_loss": loss, "num-examples": num_examples}
             ),

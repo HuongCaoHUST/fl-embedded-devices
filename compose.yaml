@@ -39,7 +39,7 @@ services:
       - flower-supernode
       - --insecure
       - --superlink=server:9092
-      - --node-config=partition-id=0 num-partitions=2
+      - --node-config=partition-id=0 num-partitions=3
     depends_on:
       - server
 
@@ -50,7 +50,18 @@ services:
       - flower-supernode
       - --insecure
       - --superlink=server:9092
-      - --node-config=partition-id=1 num-partitions=2
+      - --node-config=partition-id=1 num-partitions=3
+    depends_on:
+      - server
+
+  client-3:
+    <<: *app
+    container_name: fl-yolo11-client-3
+    command:
+      - flower-supernode
+      - --insecure
+      - --superlink=server:9092
+      - --node-config=partition-id=2 num-partitions=3
     depends_on:
       - server
 
@@ -69,6 +80,7 @@ services:
       - server
       - client-1
       - client-2
+      - client-3
 
 networks:
   flower:

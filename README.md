@@ -108,6 +108,37 @@ Dừng mô phỏng:
 docker compose down
 ```
 
+### Mô phỏng Docker Compose bằng GPU
+
+Máy host cần NVIDIA driver và NVIDIA Container Toolkit. Kiểm tra trước:
+
+```bash
+nvidia-smi
+docker run --rm --gpus all nvidia/cuda:12.6.3-base-ubuntu22.04 nvidia-smi
+```
+
+File `compose.gpu.yaml` đổi PyTorch sang wheel CUDA 12.6 chính thức và cấp GPU
+cho ba SuperNode client. Build, xác nhận CUDA rồi chạy:
+
+```bash
+docker compose -f compose.yaml -f compose.gpu.yaml build
+docker compose -f compose.yaml -f compose.gpu.yaml run --rm --no-deps \
+  client-1 python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+docker compose -f compose.yaml -f compose.gpu.yaml up
+```
+
+Theo dõi và dừng đúng project GPU:
+
+```bash
+docker compose -f compose.yaml -f compose.gpu.yaml logs -f \
+  submit server client-1 client-2 client-3
+docker compose -f compose.yaml -f compose.gpu.yaml down
+```
+
+Nếu ba client dùng chung một GPU ít VRAM, giảm `batch-size` xuống 1 và
+`image-size` xuống 320. Các client train đồng thời nên tổng VRAM là tổng mức sử
+dụng của cả ba tiến trình.
+
 Muốn xóa cả cache model/dataset đã tải, dùng `docker compose down -v`. Lệnh này
 sẽ khiến lần chạy kế tiếp phải tải lại `yolo11n.pt` và COCO8.
 
@@ -241,6 +272,27 @@ Có thể sửa `[tool.flwr.app.config]` trong `pyproject.toml` hoặc ghi đè 
 `min-*-nodes` mặc định là 2. Khi đổi số client, cần điều chỉnh các giá trị này để
 không lớn hơn số SuperNode sẵn sàng.
 
+### Chọn phần mô hình để FedAvg
+
+`config.yaml` điều khiển các phần YOLO được gửi lên server, FedAvg và gửi lại
+client:
+
+```yaml
+training:
+  merge_parts:
+    - backbone
+    - head
+```
+
+Ba giá trị hợp lệ là `backbone`, `neck`, `head`. Chọn đủ cả ba tương đương
+FedAvg toàn bộ model. Phần không được chọn không truyền qua mạng và được giữ
+local riêng trên từng client qua các round. Với YOLO11, module 0-10 là backbone,
+module 11-22 là neck và module Detect cuối (23) là head.
+
+Legacy server và Jetson client phải dùng cùng `config.yaml`. Có thể ghi đè trực
+tiếp ở cả hai phía bằng `--merge-parts backbone,head`. Log lúc khởi động sẽ in
+các phần được federate và số tensor trao đổi để kiểm tra cấu hình.
+
 ## Jetson Nano với JetPack 4
 
 JetPack 4 dùng Python 3.8 và NVIDIA PyTorch 1.11, vì vậy client Jetson dùng
@@ -254,6 +306,7 @@ docker build -f Dockerfile.legacy-server -t fl-yolo-legacy-server .
 docker run --rm -it --name fl-server -p 8080:8080 \
   -v "$PWD/models:/app/models:ro" \
   -v "$PWD/datasets/client_0/data.yaml:/app/data.yaml:ro" \
+  -v "$PWD/config.yaml:/app/config.yaml:ro" \
   -v "$PWD/runs:/app/runs" \
   fl-yolo-legacy-server --clients 3 --rounds 2 \
   --model /app/models/yolo11n.pt --data-config /app/data.yaml
@@ -272,6 +325,7 @@ Chạy client 0 (đổi IP server và node/dataset trên từng Jetson):
 docker run --rm -it --runtime nvidia --ipc=host --network host \
   -v "$PWD/datasets/client_0:/app/datasets/client_0:ro" \
   -v "$PWD/models:/app/models:ro" -v "$PWD/runs:/app/runs" \
+  -v "$PWD/config.yaml:/app/config.yaml:ro" \
   fl-yolo-jetpack4:local \
   --server 192.168.1.10:8080 --node-id jetson-0 \
   --data /app/datasets/client_0/data.yaml \

@@ -21,6 +21,7 @@ RUN python3 -m pip install --no-cache-dir \
       "PyYAML>=6.0,<7.0"
 
 COPY embeddedexample /app/embeddedexample
+COPY config.yaml /app/config.yaml
 
 RUN mkdir -p /app/models /app/runs /tmp/matplotlib /tmp/ultralytics
 

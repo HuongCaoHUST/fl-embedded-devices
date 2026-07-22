@@ -22,6 +22,10 @@ def main() -> None:
     minimum_clients = int(training.get("minimum_clients", 2))
     local_epochs = int(training.get("local_epochs", 1))
     server_rounds = int(training.get("server_rounds", 2))
+    merge_parts = training.get("merge_parts", ["backbone", "neck", "head"])
+    if not isinstance(merge_parts, list):
+        raise ValueError("training.merge_parts must be a YAML list")
+    merge_parts_value = ",".join(str(part) for part in merge_parts)
     startup_delay = float(training.get("startup_delay_seconds", 5))
     if minimum_clients < 1:
         raise ValueError("training.minimum_clients must be at least 1")
@@ -45,6 +49,7 @@ def main() -> None:
             f"min-evaluate-nodes={minimum_clients}",
             f"local-epochs={local_epochs}",
             f"num-server-rounds={server_rounds}",
+            f"merge-parts='{merge_parts_value}'",
         ]
     )
     subprocess.run(

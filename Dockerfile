@@ -13,10 +13,11 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY embeddedexample ./embeddedexample
-# Install CPU-only PyTorch explicitly. This avoids pulling several gigabytes of
-# CUDA libraries into the default simulation image.
+# CPU is the default; compose.gpu.yaml overrides this index with the official
+# CUDA 12.6 wheels while keeping the exact same PyTorch versions.
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 RUN python -m pip install --no-cache-dir \
-        --index-url https://download.pytorch.org/whl/cpu \
+        --index-url "${TORCH_INDEX_URL}" \
         torch==2.10.0 torchvision==0.25.0 \
     && python -m pip install --no-cache-dir .
 

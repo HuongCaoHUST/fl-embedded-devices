@@ -1,0 +1,28 @@
+# GPU override for x86_64 Docker Compose simulation.
+# Usage: docker compose -f compose.yaml -f compose.gpu.yaml up --build
+
+x-gpu-image: &gpu-image
+  image: fl-yolo11:gpu
+  build:
+    args:
+      TORCH_INDEX_URL: https://download.pytorch.org/whl/cu126
+
+x-gpu-client: &gpu-client
+  <<: *gpu-image
+  gpus: all
+
+services:
+  server:
+    <<: *gpu-image
+
+  client-1:
+    <<: *gpu-client
+
+  client-2:
+    <<: *gpu-client
+
+  client-3:
+    <<: *gpu-client
+
+  submit:
+    <<: *gpu-image

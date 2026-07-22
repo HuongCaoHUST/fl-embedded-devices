@@ -8,7 +8,49 @@ from pathlib import Path
 import torch
 from ultralytics import YOLO
 from ultralytics.nn.tasks import DetectionModel
+from ultralytics.utils import YAML
+from ultralytics.utils.checks import check_yaml
 from ultralytics.utils.torch_utils import intersect_dicts
+
+MODEL_PARTS = ("backbone", "neck", "head")
+
+
+def parse_merge_parts(value) -> tuple[str, ...]:
+    """Normalize a YAML list or comma-separated run-config value."""
+    raw_parts = value if isinstance(value, (list, tuple)) else str(value).split(",")
+    parts = tuple(dict.fromkeys(str(part).strip().lower() for part in raw_parts))
+    unknown = set(parts).difference(MODEL_PARTS)
+    if not parts or unknown:
+        raise ValueError(
+            f"merge_parts must contain backbone, neck and/or head; got {value!r}"
+        )
+    return parts
+
+
+def load_class_names(dataset_config: str) -> dict[int, str]:
+    """Read class names without loading any images from a YOLO data YAML."""
+    config = YAML.load(check_yaml(dataset_config))
+    names = config["names"]
+    return (
+        {int(index): str(name) for index, name in names.items()}
+        if isinstance(names, dict)
+        else {index: str(name) for index, name in enumerate(names)}
+    )
+
+
+def parameter_part(model: YOLO, name: str) -> str:
+    """Map a YOLO state_dict tensor to backbone, neck, or detection head."""
+    fields = name.split(".")
+    if len(fields) < 3 or fields[0] != "model" or not fields[1].isdigit():
+        raise ValueError(f"Cannot map YOLO tensor to a model part: {name}")
+    module_index = int(fields[1])
+    backbone_modules = len(model.model.yaml["backbone"])
+    detection_head_index = len(model.model.model) - 1
+    if module_index < backbone_modules:
+        return "backbone"
+    if module_index < detection_head_index:
+        return "neck"
+    return "head"
 
 
 def build_model(
@@ -37,12 +79,15 @@ def build_model(
     return model
 
 
-def get_trainable_state(model: YOLO) -> dict[str, torch.Tensor]:
+def get_trainable_state(
+    model: YOLO, merge_parts=None
+) -> dict[str, torch.Tensor]:
     """Return floating-point tensors only, which are safe to average with FedAvg."""
+    selected = set(parse_merge_parts(merge_parts or MODEL_PARTS))
     return {
         name: tensor.detach().cpu().clone()
         for name, tensor in model.model.state_dict().items()
-        if tensor.is_floating_point()
+        if tensor.is_floating_point() and parameter_part(model, name) in selected
     }
 
 

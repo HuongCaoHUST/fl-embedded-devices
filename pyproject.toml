@@ -53,3 +53,5 @@ device = "auto"
 output-path = "runs/fl/final_yolo11.pt"
 # One row per client and round when validating the aggregated global model.
 val-metrics-path = "runs/fl/val_metrics_by_node.csv"
+# Comma-separated because Flower run-config values must be scalar.
+merge-parts = "backbone,neck,head"

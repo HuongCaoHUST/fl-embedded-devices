@@ -14,7 +14,13 @@ import numpy as np
 import torch
 import yaml
 
-from embeddedexample.task import build_model, evaluate, train
+from embeddedexample.task import (
+    build_model,
+    evaluate,
+    get_trainable_state,
+    parse_merge_parts,
+    train,
+)
 
 
 def floating_state(model):
@@ -39,7 +45,22 @@ class JetsonYoloClient(fl.client.NumPyClient):
             else dict(enumerate(names))
         )
         self.model = build_model(args.model, class_names=class_names)
-        self.parameter_names = list(floating_state(self.model))
+        self.parameter_names = list(get_trainable_state(self.model, args.merge_parts))
+        print(
+            f"Node {args.node_id}: federated parts={','.join(args.merge_parts)}; "
+            f"exchanging {len(self.parameter_names)} tensors"
+        )
+
+    def verify_server_parts(self, config: Mapping) -> None:
+        server_value = config.get("merge_parts")
+        if server_value is None:
+            return
+        server_parts = parse_merge_parts(server_value)
+        if set(server_parts) != set(self.args.merge_parts):
+            raise ValueError(
+                f"Merge config mismatch: server={server_parts}, "
+                f"client={self.args.merge_parts}"
+            )
 
     def release_resources(self, phase: str) -> None:
         """Release Ultralytics runtime objects and CUDA cache between phases."""
@@ -104,6 +125,7 @@ class JetsonYoloClient(fl.client.NumPyClient):
         self.model.model.load_state_dict(local_state, strict=True)
 
     def fit(self, parameters, config):
+        self.verify_server_parts(config)
         self.set_parameters(parameters)
         # Ultralytics 8.4 resets `overrides` from the checkpoint after each
         # train call, and that reduced dictionary may omit the required model
@@ -134,6 +156,7 @@ class JetsonYoloClient(fl.client.NumPyClient):
         return self.get_parameters({}), num_examples, {"node_id": self.args.node_id}
 
     def evaluate(self, parameters, config):
+        self.verify_server_parts(config)
         self.set_parameters(parameters)
         print(f"Node {self.args.node_id}: validating global model on {self.args.data}")
         # Standalone Ultralytics validation fuses Conv+BatchNorm in-place. Run
@@ -188,11 +211,24 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--learning-rate", type=float, default=0.01)
     parser.add_argument("--device", default="0")
+    parser.add_argument("--config", type=Path, default=Path("/app/config.yaml"))
+    parser.add_argument(
+        "--merge-parts",
+        default=None,
+        help="Override config with comma-separated parts, e.g. backbone,head",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    configured_parts = None
+    if args.config.is_file():
+        config = yaml.safe_load(args.config.read_text(encoding="utf-8")) or {}
+        configured_parts = config.get("training", {}).get("merge_parts")
+    args.merge_parts = parse_merge_parts(
+        args.merge_parts or configured_parts or ("backbone", "neck", "head")
+    )
     print(f"Torch {torch.__version__}; CUDA available: {torch.cuda.is_available()}")
     if args.device != "cpu" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is not available inside the container")
