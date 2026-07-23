@@ -21,6 +21,7 @@ def main() -> None:
 
     minimum_clients = int(training.get("minimum_clients", 2))
     local_epochs = int(training.get("local_epochs", 1))
+    workers = int(training.get("workers", 2))
     server_rounds = int(training.get("server_rounds", 2))
     merge_parts = training.get("merge_parts", ["backbone", "neck", "head"])
     if not isinstance(merge_parts, list):
@@ -33,6 +34,8 @@ def main() -> None:
         raise ValueError("training.startup_delay_seconds cannot be negative")
     if local_epochs < 1:
         raise ValueError("training.local_epochs must be at least 1")
+    if workers < 0:
+        raise ValueError("training.workers cannot be negative")
     if server_rounds < 1:
         raise ValueError("training.server_rounds must be at least 1")
 
@@ -48,6 +51,7 @@ def main() -> None:
             f"min-train-nodes={minimum_clients}",
             f"min-evaluate-nodes={minimum_clients}",
             f"local-epochs={local_epochs}",
+            f"workers={workers}",
             f"num-server-rounds={server_rounds}",
             f"merge-parts='{merge_parts_value}'",
         ]

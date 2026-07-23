@@ -74,6 +74,7 @@ def train(msg: Message, context: Context) -> Message:
         device=_device(context),
         learning_rate=float(context.run_config["learning-rate"]),
         project=f"runs/fl/client_{partition_id}",
+        workers=int(context.run_config["workers"]),
     )
     num_examples = len(model.trainer.train_loader.dataset)
     loss_parts = [
@@ -110,6 +111,7 @@ def evaluate(msg: Message, context: Context) -> Message:
         image_size=int(context.run_config["image-size"]),
         batch_size=int(context.run_config["batch-size"]),
         device=_device(context),
+        workers=int(context.run_config["workers"]),
     )
     # Ultralytics exposes target counts in DetMetrics. Weighting by the number
     # of annotated objects avoids giving a tiny client the same influence as a

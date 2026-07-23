@@ -7,7 +7,11 @@ training:
   minimum_clients: 3
 
   # Number of local YOLO epochs performed by each client in every FL round.
-  local_epochs: 1
+  local_epochs: 2
+
+  # DataLoader processes per client. Keep low when clients train concurrently.
+  # Use 0 if shared-memory or RAM errors persist.
+  workers: 2
 
   # Number of federated aggregation rounds performed by the server.
   server_rounds: 2

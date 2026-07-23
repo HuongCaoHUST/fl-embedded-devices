@@ -42,6 +42,7 @@ services:
       - --node-config=partition-id=0 num-partitions=3
     depends_on:
       - server
+    shm_size: "1gb"
 
   client-2:
     <<: *app
@@ -53,6 +54,7 @@ services:
       - --node-config=partition-id=1 num-partitions=3
     depends_on:
       - server
+    shm_size: "1gb"
 
   client-3:
     <<: *app
@@ -64,6 +66,7 @@ services:
       - --node-config=partition-id=2 num-partitions=3
     depends_on:
       - server
+    shm_size: "1gb"
 
   submit:
     <<: *app

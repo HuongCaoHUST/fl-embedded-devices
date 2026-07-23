@@ -42,6 +42,7 @@ min-train-nodes = 2
 min-evaluate-nodes = 2
 min-available-nodes = 2
 local-epochs = 1
+workers = 2
 learning-rate = 0.01
 batch-size = 4
 image-size = 320
